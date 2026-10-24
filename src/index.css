@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #eef0ec;
+  --panel: #ffffff;
+  --raised: #f6f7f4;
+  --line: #dfe2dc;
+  --ink: #1b1f1d;
+  --muted: #5d6661;
+  --accent: #0d8a76;
+  --accent-ink: #ffffff;
+  --danger: #c0392b;
+  --checker: #e4e6e2;
+  color-scheme: light;
+}
+.dark {
+  --bg: #0f1211;
+  --panel: #171b19;
+  --raised: #1f2421;
+  --line: #2b312e;
+  --ink: #e9edeb;
+  --muted: #9aa49f;
+  --accent: #3cc5a9;
+  --accent-ink: #06201a;
+  --danger: #ff7a6b;
+  --checker: #2a2f2c;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-danger: var(--danger);
+  /* System fonts only: no download, native look on every OS. */
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Noto Sans", Cantarell, "Helvetica Neue", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-raised px-3 py-2 text-sm font-medium
+    text-ink transition hover:border-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent
+    disabled:cursor-not-allowed disabled:opacity-50;
+}
+.btn-primary {
+  @apply border-transparent bg-accent text-accent-ink hover:border-transparent hover:brightness-110;
+}
+.field {
+  @apply w-full rounded-lg border border-line bg-raised px-3 py-2 text-sm text-ink focus-visible:outline-2 focus-visible:outline-accent;
+}
+/* Native <select> arrows differ per engine (GTK draws a heavy one): use our own chevron. */
+.select-chevron {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23889590' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem;
+}
+.label {
+  @apply mb-1.5 block text-xs font-semibold tracking-wide text-muted uppercase;
+}
+
+@keyframes slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}

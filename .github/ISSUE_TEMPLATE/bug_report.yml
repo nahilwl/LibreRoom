@@ -1,0 +1,40 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug! Please don't attach private photos — a similar public image is enough.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Linux desktop, Windows desktop, macOS desktop, Web — Chromium/Chrome/Edge, Web — Firefox, Web — Safari, Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LibreRoom version / commit
+  - type: textarea
+    id: details
+    attributes:
+      label: Additional details
+      description: OS version, model used (Fast/Precise), image size and format, error message, screenshots.
