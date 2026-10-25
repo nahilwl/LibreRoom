@@ -27,7 +27,9 @@ npm run tauri build    # desktop bundles (deb, rpm, AppImage on Linux)
 |---|---|---|
 | `npm test` | Document model (layers, geometry, hit-testing), tensor maths, project validation and migration, history | — |
 | `LIBREROOM_MODEL_DIR=/dir npm test` | The real ISNet model on a synthetic image | `/dir/isnet-int8.onnx` |
-| `npm run preview & CHROMIUM_PATH=… npm run test:e2e` | Full user flows in Chromium, including privacy (allowed origins) | A Chromium/Chrome binary, network for the model |
+| `npm run preview & CHROMIUM_PATH=… npm run test:e2e` | Full user flows in Chromium, including privacy (allowed origins, CSP) | A Chromium/Chrome binary, network for the model |
+| `npm run build:pages && node scripts/serve-pages.mjs &` then `LIBREROOM_URL=http://127.0.0.1:4174/LibreRoom/ npm run test:e2e` | The same suite on a GitHub Pages simulation (sub-path, no COOP/COEP), including **offline**. `LIBREROOM_SW=block` tests the single-threaded fallback; `LIBREROOM_BROWSER=firefox FIREFOX_PATH=…` runs it in Firefox | As above |
+| `npm run build:pages && npm run serve:pages &` then `npm run test:sw` | Service worker lifecycle: isolation, pre-cache, update (old cache deleted, model cache kept), offline after update | Chromium |
 | `cd src-tauri && cargo test` | The Rust model allow-list matches `src/lib/models.ts` | Rust |
 | `npm run test:tauri` | The real desktop app (Linux): native AI online, with port 41917 taken (and no listening socket), then offline. Add `-- --compare` to compare the native and browser engines on the same images | Rust, Tauri deps, `xvfb-run`, `ss` |
 

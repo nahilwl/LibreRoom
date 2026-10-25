@@ -20,6 +20,14 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - Keyboard shortcuts: arrows to nudge, Ctrl+D, Ctrl+]/[, Esc, ? for the shortcut list.
 - Drop or paste several images at once.
 
+**Web version (GitHub Pages ready)**
+- Builds for `https://nahilwl.github.io/LibreRoom/` (`npm run build:pages`); manual deployment workflow.
+- Service worker on the site's own origin: multi-threaded AI on GitHub Pages (COOP/COEP added) and offline use (network first, local fallback).
+- Strict Content-Security-Policy in web builds: only the site and the model host can be contacted.
+- `THIRD-PARTY-NOTICES.txt` generated with every web build (licenses of bundled packages and of ONNX Runtime's native components).
+- Versioned offline cache: app shell pre-cached, old versions cleaned up on update, model cache preserved.
+- Tested on a GitHub Pages simulation (`scripts/serve-pages.mjs`) in Chromium and Firefox, including offline and the single-threaded fallback.
+
 **Batch processing**
 - Queue any number of images; remove backgrounds, set a background, format, quality and maximum size.
 - Sequential processing (one model, one image in memory at a time), progress, cancellation, per-file and ZIP download; originals are never modified.

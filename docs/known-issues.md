@@ -7,7 +7,9 @@
 | Precise model needs WebGPU (web only) | Not available on desktop (natively it would need ~7.7 GB of RAM) or without a GPU | Use Fast. |
 | WebKitWebDriver is unavailable on Ubuntu 26.04 | No UI automation inside the desktop window | The in-app self-test covers the engine. UI flows are tested in Chromium. |
 | Windows and macOS untested | Unknown behaviour | Help wanted! |
-| Web version on GitHub Pages runs single-threaded | About 2× slower | See [web-deployment.md](web-deployment.md). |
+| Web: Safari (macOS, iOS) not tested | Unknown behaviour | Help wanted; Chromium and Firefox are tested. |
+| Web: browsers that block service workers run the AI single-threaded | About 2× slower (≈ 5 s per photo) | Works, just slower. See [web-deployment.md](web-deployment.md). |
+| Web: the editor is not designed for phone screens | Hard to use on small screens | Responsive layout planned. |
 | The `.deb` package is named `libre-room` (derived by Tauri from the product name) | Cosmetic | Rename before the first release. |
 | A brush stroke on a very large image (48 MP) copies the mask once at stroke start and reads it back at the end | Short pause at both ends | Region-based mask updates later. |
 | EXIF orientation is applied by the browser decoder, but not covered by a test | — | Add a rotated fixture. |

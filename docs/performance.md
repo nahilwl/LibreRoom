@@ -114,6 +114,10 @@ Previous version (before the editor features), for comparison:
 
 Idle memory varies between runs (WebKit's garbage collector); the ranges overlap.
 
+## Web version on GitHub Pages
+
+See [web-deployment.md](web-deployment.md#test-results). On the Pages simulation: 2.4 s per removal in Chromium and 2.5 s in Firefox (4 threads, thanks to the service worker); 4.7 s single-threaded; first visit 332 KiB.
+
 ## Web version (Chromium)
 
 - Inference: `npm run test:e2e`.

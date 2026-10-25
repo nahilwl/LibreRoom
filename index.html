@@ -4,15 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-    <title>LibreRoom</title>
-    <script>
-      // Apply the theme before first paint to avoid a light flash in dark mode.
-      try {
-        const t = localStorage.getItem("libreroom-theme");
-        if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches))
-          document.documentElement.classList.add("dark");
-      } catch {}
-    </script>
+    <meta name="description" content="Free, private photo editor that removes backgrounds with AI running in your browser. No account, no upload, no watermark." />
+    <meta name="theme-color" content="#0d8a76" />
+    <title>LibreRoom — free, private AI background remover</title>
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

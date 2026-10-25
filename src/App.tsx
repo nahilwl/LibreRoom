@@ -63,7 +63,7 @@ function Busy({ label, since }: { label: string; since: number }) {
   return <Progress label={t("busy.elapsed", { label, seconds: ((now - since) / 1000).toFixed(1) })} />;
 }
 
-const closeImages = (d: Doc | null) => d?.layers.forEach((l) => l.kind === "image" && l.image.close());
+const imagesOf = (d: Doc | null) => d?.layers.flatMap((l) => (l.kind === "image" ? [l.image] : [])) ?? [];
 
 export default function App() {
   const [doc, setDoc] = useState<Doc | null>(null);
@@ -81,6 +81,13 @@ export default function App() {
   const lastEdit = useRef({ key: "", at: 0 });
   const fileInput = useRef<HTMLInputElement>(null);
   const autosave = useAutosave(doc, dirty, (e) => setError(e.message));
+  // Bitmaps of a replaced document are freed only after the canvas has switched to the new
+  // one: a frame already scheduled for the old document must not draw a closed bitmap.
+  const retired = useRef<ImageBitmap[]>([]);
+  useEffect(() => {
+    const list = retired.current.splice(0);
+    if (list.length) requestAnimationFrame(() => requestAnimationFrame(() => list.forEach((b) => b.close())));
+  }, [doc]);
   const batch = useBatch();
 
   const run = async (label: MessageKey, task: () => Promise<void>) => {
@@ -130,10 +137,10 @@ export default function App() {
 
   const replaceDoc = (next: Doc, keepDirty = false) => {
     if (dirty && !keepDirty && !confirm(t("confirm.discard"))) {
-      closeImages(next);
+      imagesOf(next).forEach((b) => b.close()); // never shown
       return;
     }
-    closeImages(doc);
+    retired.current.push(...imagesOf(doc));
     history.current.clear();
     setDoc(next);
     setDirty(keepDirty);

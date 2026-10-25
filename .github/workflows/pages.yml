@@ -1,4 +1,6 @@
-# Deploys the web version to GitHub Pages. Manual only: it never runs on push.
+# Deploys the web version to GitHub Pages: https://nahilwl.github.io/LibreRoom/
+# Manual only (Actions tab → "Deploy web version" → Run workflow): it never runs on push.
+# One-time repository setting: Settings → Pages → Source: "GitHub Actions".
 name: Deploy web version
 
 on:
@@ -11,7 +13,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false # never interrupt a deployment halfway
 
 jobs:
   deploy:
@@ -20,16 +22,24 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
       - run: npm run build:pages
-      - uses: actions/upload-pages-artifact@v3
+      - name: Check the static site
+        run: |
+          grep -q 'src="/LibreRoom/assets/' dist/index.html
+          grep -q 'http-equiv="Content-Security-Policy"' dist/index.html
+          test -f dist/coi-sw.js
+          test -f dist/theme.js
+          test ! -e dist/selftest.html
+          ls -la dist dist/assets
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

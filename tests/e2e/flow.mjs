@@ -5,7 +5,8 @@
 //  3. formats and resolutions: PNG/JPEG/WebP from 1×1 to 48 MP
 // Also asserts that no origin other than the app and the model host is contacted.
 //   CHROMIUM_PATH=/path/to/chrome npm run test:e2e
-import { chromium } from "playwright-core";
+//   LIBREROOM_BROWSER=firefox FIREFOX_PATH=/path/to/firefox npm run test:e2e   (Playwright's Firefox build)
+import { chromium, firefox } from "playwright-core";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -14,10 +15,13 @@ const url = process.env.LIBREROOM_URL ?? "http://localhost:4173";
 const img = fileURLToPath(new URL("../fixtures/sneakers-cc0.jpg", import.meta.url));
 const out = fileURLToPath(new URL("../../test-results/e2e", import.meta.url));
 mkdirSync(out, { recursive: true });
-assert(process.env.CHROMIUM_PATH, "Set CHROMIUM_PATH to a Chromium/Chrome executable");
-
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+const useFirefox = process.env.LIBREROOM_BROWSER === "firefox";
+const executablePath = useFirefox ? process.env.FIREFOX_PATH : process.env.CHROMIUM_PATH;
+assert(executablePath, `Set ${useFirefox ? "FIREFOX_PATH" : "CHROMIUM_PATH"} to the browser executable`);
+const browser = await (useFirefox ? firefox : chromium).launch({ executablePath });
+// LIBREROOM_SW=block tests the single-threaded fallback (no service worker, no isolation).
+const blockSw = process.env.LIBREROOM_SW === "block";
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", serviceWorkers: blockSw ? "block" : "allow" });
 const origins = new Set();
 context.on("request", (r) => origins.add(new URL(r.url()).origin));
 
@@ -27,6 +31,9 @@ async function newPage() {
   page.on("pageerror", (e) => console.log("page error:", e.message));
   page.on("dialog", (d) => d.accept()); // "discard unsaved changes?" when importing over an edited image
   await page.goto(url);
+  // On a static host the COI service worker reloads the page once, on the first visit only.
+  if (!blockSw) await page.waitForFunction(() => crossOriginIsolated, null, { timeout: 15_000 }).catch(() => {});
+  await page.waitForLoadState("load");
   return page;
 }
 const fileInput = (page) => page.locator('input[type=file][accept*=".libreroom"]');
@@ -67,6 +74,14 @@ async function exportAlpha(page, points) {
 
 // ---------- 1. main flow ----------
 let page = await newPage();
+const env = await page.evaluate(async () => ({
+  isolated: crossOriginIsolated,
+  csp: !!document.querySelector('meta[http-equiv="Content-Security-Policy"]'),
+  // The CSP must stop the page from contacting any server other than the site and the model host.
+  unknownServer: await fetch("https://example.com/", { mode: "no-cors" }).then(() => "reachable", () => "blocked"),
+}));
+console.log("environment:", JSON.stringify(env));
+assert.equal(env.unknownServer, "blocked", "the CSP blocks unknown servers");
 await page.screenshot({ path: `${out}/01-empty.png` });
 await fileInput(page).setInputFiles(img);
 await page.getByText("1280 × 742 px").waitFor();
@@ -368,6 +383,21 @@ for (const [format, w, h] of cases) {
   } else {
     console.log(`${format} ${w}x${h}: imported`);
   }
+}
+
+// ---------- 4. offline (web build with its service worker) ----------
+if (!blockSw && !url.includes(":4173")) {
+  await context.setOffline(true);
+  page = await newPage();
+  await page.getByText("Drop an image here").waitFor();
+  await fileInput(page).setInputFiles(img);
+  await page.getByText("1280 × 742 px").waitFor();
+  await button(page, "Remove background").click();
+  await page.getByText(/Local AI:/).waitFor({ timeout: 300_000 });
+  r = await exportAlpha(page, probe);
+  assert.equal(r.alpha[0], 0, "offline: background removed");
+  await context.setOffline(false);
+  console.log("offline OK:", await page.getByText(/Local AI:/).textContent());
 }
 
 console.log("origins contacted:", [...origins].join(", "));

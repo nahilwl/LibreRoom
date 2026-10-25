@@ -11,9 +11,11 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "test:e2e": "node tests/e2e/flow.mjs",
-    "build:pages": "tsc -p tsconfig.json && vite build --base=/libreroom/",
+    "build:pages": "tsc -p tsconfig.json && vite build --base=/LibreRoom/",
     "tauri": "tauri",
-    "test:tauri": "bash scripts/tauri-selftest.sh"
+    "test:tauri": "bash scripts/tauri-selftest.sh",
+    "test:sw": "node tests/e2e/sw-update.mjs",
+    "serve:pages": "node scripts/serve-pages.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

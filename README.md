@@ -6,11 +6,13 @@
 
 **Remove backgrounds. Keep your photos to yourself.**
 
-A free and open-source photo editor that removes backgrounds with AI **running entirely on your computer**.<br>
+A free and open-source photo editor that removes backgrounds with AI **running entirely on your device**: in your web browser, or as a desktop app.<br>
 No account. No upload. No watermark. No subscription.
 
+**▶ Use it in your browser: [nahilwl.github.io/LibreRoom](https://nahilwl.github.io/LibreRoom/)** <sub>(being published: the link goes live with the first public release)</sub>
+
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-0d8a76)](LICENSE)
-[![Platforms: Linux · Web](https://img.shields.io/badge/platforms-Linux%20%C2%B7%20Web-0d8a76)](#installation)
+[![Platforms: Web · Linux](https://img.shields.io/badge/platforms-Web%20%C2%B7%20Linux-0d8a76)](#getting-started)
 [![Contributions welcome](https://img.shields.io/badge/contributions-welcome-3cc5a9)](CONTRIBUTING.md)
 
 <img src="docs/assets/before-after.jpg" alt="A pair of sneakers on purple paving (before) and the same sneakers cut out by LibreRoom on a light background (after)" width="900">
@@ -67,11 +69,22 @@ On the [roadmap](CHANGELOG.md#roadmap): canvas resizing, colour adjustments, obj
 
 All screenshots are unedited captures of the running app.
 
-## Installation
+## Getting started
 
-> LibreRoom is in early development. No binary release has been published yet, so for now you build it from source.
+### 🌐 Web: nothing to install
+
+Open **[nahilwl.github.io/LibreRoom](https://nahilwl.github.io/LibreRoom/)** in Chrome, Edge, Firefox or another recent browser, then drop a photo.
+
+- The first time you remove a background, the browser downloads the AI engine and, after you click **Download the model**, the 44 MB model. Both are then cached: the next times, it works **offline**.
+- Your photos are processed **inside the browser tab**. They are never uploaded, and the page is locked by a Content-Security-Policy that only allows the site itself and the model download.
+- Speed: about **2.5 s per photo** on a recent laptop (multi-threaded), about 5 s where the browser does not allow multi-threading ([measured](docs/web-deployment.md#test-results)).
+- Tested in Chromium 141 and Firefox (Playwright builds). Safari has not been tested yet.
+
+> The web version is being prepared for its first public release; until then, run it locally (below).
 
 ### Linux (desktop)
+
+> No binary release has been published yet, so for now you build the desktop app from source.
 
 Tested on Ubuntu 26.04 (x86_64).
 
@@ -85,14 +98,14 @@ npm install
 npm run tauri build    # packages in src-tauri/target/release/bundle/
 ```
 
-### Web
+### Web, locally
 
 ```bash
 npm install
 npm run build && npm run preview   # open http://localhost:4173
+# or exactly as on GitHub Pages:
+npm run build:pages && node scripts/serve-pages.mjs   # open http://127.0.0.1:4174/LibreRoom/
 ```
-
-A hosted version on GitHub Pages is planned ([details](docs/web-deployment.md)).
 
 ### Windows and macOS
 
@@ -103,7 +116,7 @@ Not available yet. The project is configured for both (Tauri 2 targets, icons), 
 | | |
 |---|---|
 | Images | Processed in memory on your device. Never uploaded. |
-| Network | Only when *you* click **Download the model** (Hugging Face, pinned version, SHA-256 verified). The desktop app opens no network port. |
+| Network | Only to load the web app itself, and when *you* click **Download the model** (Hugging Face, pinned version, SHA-256 verified). In the browser, a Content-Security-Policy blocks every other server; the desktop app opens no network port. |
 | Accounts, ads, telemetry | None. |
 | Offline | Fully functional once a model is installed (tested with all remote connections blocked). |
 | Storage | Models in the app's local cache; autosave in local IndexedDB; your projects wherever you save them. |
@@ -134,6 +147,8 @@ Contributions of all kinds are welcome: code, testing on Windows or macOS, trans
 ## License
 
 LibreRoom is free software under the [GNU Affero General Public License v3.0 or later](LICENSE).
+
+Third-party software included in the web version is listed, with its licenses, in `THIRD-PARTY-NOTICES.txt`, which is generated with every web build and published next to the site. All dependencies use licenses compatible with the AGPL (MIT, BSD, Apache-2.0, ISC, MPL-2.0 for build tools only). AI models are downloaded separately; see [AI models](docs/ai-models.md) for their licenses.
 
 ## Acknowledgements
 
