@@ -45,10 +45,14 @@ In **Background**, pick:
 
 Your photo is the first **layer**. You can stack more on top.
 
-- **Layers** panel: **Add image** (or drop or paste an image onto the canvas) and **Add text**.
+- **Layers** panel: **Add image** (several at once if you like) and **Add text**. You can also drop or paste images onto the canvas: each one becomes a layer. Dropping several images onto an empty editor opens the first and stacks the others on top.
 - **Click** a layer on the canvas to select it, then **drag** it to move it. Clicking the empty part of a cut-out selects what is behind it.
-- With a layer selected, the panel sets its **size**, **rotation** and **opacity**. You can centre it, or reset it.
-- The list shows every layer, top first. You can **hide or show** one (eye icon), move it **up or down**, or **delete** it (trash icon, or the Delete key).
+- While you move a layer, it **snaps** to the canvas edges and centre and to other layers, and red guide lines show the alignment. Hold **Alt** to move freely.
+- **Resize** with the square handles at the corners; the opposite corner stays in place. **Rotate** with the round handle above the layer (hold **Shift** for 15° steps).
+- **Select several layers**: Shift- or Ctrl-click them (on the canvas or in the list), drag a rectangle over an empty area, or press Ctrl+A. You can then move, align, duplicate, change opacity or delete them together.
+- **Align**: with one layer, the six align buttons place it against the canvas; with several, they align them with each other.
+- **Shadow**: tick **Drop shadow**, then set its softness, offset, strength and colour. The shadow follows the cut-out shape or the letters.
+- The list shows every layer, top first. You can **hide or show** one (eye icon), move it **up or down**, **duplicate** it (Ctrl+D), or **delete** it (trash icon, or the Delete key).
 
 In **Text**, write your text (several lines allowed), then choose the font, size, colour, bold or italic, and alignment. **Double-click** a text on the canvas to edit it.
 
@@ -62,6 +66,20 @@ In **Export**, choose the format and width, then **Export image**:
 - **WebP** offers both.
 
 No watermark, and no size limit other than your computer's memory.
+
+## Batch processing
+
+Open **Batch** (left bar) to process many photos the same way:
+1. Add or drop as many images as you like.
+2. Choose whether to remove the background, then the background (transparent or a colour), the format and, optionally, a maximum size.
+3. Click **Process**. Images are processed one at a time; each line shows its status and time. **Cancel** stops after the current image.
+4. Download each result, or **Download all (ZIP)**.
+
+Your original files are never modified: results are new files named `name-libreroom.png` (or `.jpg`, `.webp`). The AI model must be downloaded once first, in **Remove BG**.
+
+## Keyboard shortcuts
+
+Press **?** (or the keyboard button in the top bar) to see them all: undo/redo, select all, duplicate, delete, nudge with the arrow keys (Shift for 10 px), bring forward or send backward (Ctrl+] / Ctrl+[), zoom, and the brush keys.
 
 ## Saving your work
 

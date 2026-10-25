@@ -9,7 +9,20 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 **Layers and text**
 - Image and text layers: add, select on the canvas (transparent areas of cut-outs are clicked through), drag to move, size, rotation, opacity, visibility, reorder, delete (Delete key).
 - Text: multi-line, sans/serif/monospace, size, bold, italic, colour, alignment; double-click a text to edit it.
-- Project format v2 (layers); v1 files are migrated automatically.
+- Project format v3 (layers, shadows, multiple selection); v1 and v2 files are migrated automatically.
+
+**Editor**
+- Corner handles to resize (opposite corner fixed) and a handle to rotate, with snapping to right angles (15° steps with Shift).
+- Smart snapping with visual guides to the canvas and other layers while moving (Alt to disable).
+- Multiple selection: Shift/Ctrl-click, rectangle selection, Ctrl+A; move, align, duplicate, opacity and delete together.
+- Align left/centre/right/top/middle/bottom (to the canvas, or to each other).
+- Customisable drop shadows per layer (softness, offset, strength, colour).
+- Keyboard shortcuts: arrows to nudge, Ctrl+D, Ctrl+]/[, Esc, ? for the shortcut list.
+- Drop or paste several images at once.
+
+**Batch processing**
+- Queue any number of images; remove backgrounds, set a background, format, quality and maximum size.
+- Sequential processing (one model, one image in memory at a time), progress, cancellation, per-file and ZIP download; originals are never modified.
 
 **Native AI on desktop**
 - ONNX Runtime 1.31 in the Rust process. Compared with WASM in WebKitGTK, it is ~1.8× faster, has a lower and stable memory peak and uses 4–9× less CPU time, with equivalent masks (measured).
@@ -46,6 +59,6 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## Roadmap
 
-- **0.2**: customisable shadows; resizing (canvas presets, transform handles); batch processing; colour adjustments; Windows and macOS builds.
+- **0.2**: native "Save as" dialog on desktop; canvas resizing and presets; colour adjustments; Windows and macOS builds.
 - **0.3**: object removal (inpainting), upscaling ×2/×4, advanced touch-ups.
 - **0.4**: optimisation, installers, community translations.

@@ -2,15 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { t, type MessageKey } from "./i18n";
 import {
   addLayer,
+  align,
   docFromImage,
+  duplicateLayers,
   findLayer,
   imageLayer,
   maskBytes,
   moveLayer,
-  removeLayer,
+  removeLayers,
+  select as selectIds,
   selectedLayer,
   textLayer,
   updateLayer,
+  updateLayers,
   type Doc,
   type ImageLayer,
   type Layer,
@@ -19,7 +23,7 @@ import {
 import { baseName, decodeImage, openProject, saveBlob, serializeProject } from "./lib/files";
 import { History } from "./lib/history";
 import { MODELS } from "./lib/models";
-import { exportImage, type ExportFormat } from "./lib/render";
+import { exportImage, measureText, type ExportFormat } from "./lib/render";
 import { segment } from "./lib/segmenter";
 import { restoreAutosave } from "./lib/autosave";
 import { useAutosave } from "./hooks/useAutosave";
@@ -27,6 +31,10 @@ import { prefs, useLanguage, useTheme } from "./hooks/usePreferences";
 import { Header } from "./components/Header";
 import { Icon, type IconName } from "./components/Icon";
 import { Progress } from "./components/Progress";
+import { ShortcutsDialog } from "./components/ShortcutsDialog";
+import { BatchView } from "./components/BatchView";
+import { BatchPanel } from "./components/panels/BatchPanel";
+import { useBatch } from "./hooks/useBatch";
 import { Workspace, type BrushSettings } from "./components/Workspace";
 import { RemovePanel } from "./components/panels/RemovePanel";
 import { BrushPanel } from "./components/panels/BrushPanel";
@@ -35,7 +43,7 @@ import { TextPanel } from "./components/panels/TextPanel";
 import { BackgroundPanel } from "./components/panels/BackgroundPanel";
 import { ExportPanel } from "./components/panels/ExportPanel";
 
-type Section = "remove" | "brush" | "layers" | "text" | "background" | "export";
+type Section = "remove" | "brush" | "layers" | "text" | "background" | "export" | "batch";
 const SECTIONS: { id: Section; label: MessageKey; icon: IconName }[] = [
   { id: "remove", label: "section.remove", icon: "wand" },
   { id: "brush", label: "section.brush", icon: "brush" },
@@ -43,6 +51,7 @@ const SECTIONS: { id: Section; label: MessageKey; icon: IconName }[] = [
   { id: "text", label: "section.text", icon: "text" },
   { id: "background", label: "section.background", icon: "image" },
   { id: "export", label: "section.export", icon: "download" },
+  { id: "batch", label: "section.batch", icon: "batch" },
 ];
 
 function Busy({ label, since }: { label: string; since: number }) {
@@ -65,12 +74,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [dark, setDark] = useTheme();
   const [lang, setLang] = useLanguage();
   const history = useRef(new History<Doc>(maskBytes));
   const lastEdit = useRef({ key: "", at: 0 });
   const fileInput = useRef<HTMLInputElement>(null);
   const autosave = useAutosave(doc, dirty, (e) => setError(e.message));
+  const batch = useBatch();
 
   const run = async (label: MessageKey, task: () => Promise<void>) => {
     setError(null);
@@ -103,7 +114,10 @@ export default function App() {
   /** Applies `change` to the current document (always the latest state). */
   const edit = (change: (d: Doc) => Doc, coalesce = "") => doc && apply(change(doc), coalesce);
   const editLayer = <L extends Layer>(id: string, patch: Partial<L>, coalesce = "") => edit((d) => updateLayer<L>(d, id, patch), coalesce);
-  const select = (id: string | null) => doc && setDoc({ ...doc, selectedId: id });
+  const editLayers = (ids: string[], patch: Partial<Layer>, coalesce = "") =>
+    edit((d) => updateLayers(d, new Map(ids.map((id) => [id, patch]))), coalesce);
+  /** Selection changes are not undo steps. */
+  const select = (ids: string[]) => doc && setDoc(selectIds(doc, ids));
 
   const restore = (d: Doc | null) => {
     if (!d) return;
@@ -127,13 +141,22 @@ export default function App() {
     if (!keepDirty) autosave.discard();
   };
 
-  /** Adds an image as a new layer, scaled down to fit the canvas if needed. */
-  const addImage = (file: File) =>
+  /** `base` plus the images as new layers, each scaled down to fit the canvas and slightly offset. */
+  const withImages = async (base: Doc, files: File[]) => {
+    let next = base;
+    for (const [i, file] of files.entries()) {
+      const image = await decodeImage(file);
+      const scale = Math.min(1, (0.8 * next.width) / image.width, (0.8 * next.height) / image.height);
+      next = addLayer(next, imageLayer(baseName(file.name), file, image, next.width / 2 + i * 24, next.height / 2 + i * 24, scale));
+    }
+    return next;
+  };
+
+  /** Adds images to the open document as one undo step. */
+  const addImages = (files: File[]) =>
     doc &&
     run("busy.opening", async () => {
-      const image = await decodeImage(file);
-      const scale = Math.min(1, (0.8 * doc.width) / image.width, (0.8 * doc.height) / image.height);
-      apply(addLayer(doc, imageLayer(baseName(file.name), file, image, doc.width / 2, doc.height / 2, scale)));
+      apply(await withImages(doc, files));
       setSection("layers");
     });
 
@@ -144,18 +167,25 @@ export default function App() {
     setSection("text");
   };
 
-  /** Open: a project or an image replaces the document. Drop/paste onto an open document adds a layer. */
-  const importFiles = (files: FileList | File[] | null, asLayer = false) => {
-    const file = files?.[0];
-    if (!file) return;
-    if (asLayer && doc && !file.name.endsWith(".libreroom")) return addImage(file);
+  /**
+   * Open: a project or an image replaces the document. Dropping or pasting images onto an open
+   * document adds them as layers; dropping several onto an empty editor opens the first and
+   * adds the others as layers.
+   */
+  const importFiles = (list: FileList | File[] | null, asLayers = false) => {
+    const files = [...(list ?? [])];
+    const project = files.find((f) => f.name.endsWith(".libreroom"));
+    if (project) {
+      run("busy.opening", async () => replaceDoc(await openProject(await project.text())));
+      return;
+    }
+    if (!files.length) return;
+    if (asLayers && doc) return addImages(files);
     run("busy.opening", async () => {
-      if (file.name.endsWith(".libreroom")) {
-        replaceDoc(await openProject(await file.text()));
-        return;
-      }
-      replaceDoc(docFromImage(baseName(file.name), file, await decodeImage(file)));
-      setSection("remove");
+      const [first, ...rest] = files;
+      const fresh = docFromImage(baseName(first.name), first, await decodeImage(first));
+      replaceDoc(rest.length ? await withImages(fresh, rest) : fresh);
+      setSection(rest.length ? "layers" : "remove");
     });
   };
 
@@ -220,10 +250,13 @@ export default function App() {
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if ((e.target as HTMLElement).closest?.("input, textarea")) return;
-      if (e.clipboardData?.files.length) importFiles(e.clipboardData.files, true);
+      if (!e.clipboardData?.files.length) return;
+      if (section === "batch") batch.add(e.clipboardData.files);
+      else importFiles(e.clipboardData.files, true);
     };
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input, textarea, select")) return;
+      if ((e.target as HTMLElement).closest("input, textarea, select, dialog")) return;
+      if (section === "batch" && e.key !== "?") return; // layer shortcuts do not apply to the batch view
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (mod && key === "s") {
@@ -238,9 +271,28 @@ export default function App() {
       } else if (mod && key === "z") {
         e.preventDefault();
         if (!busy) undo();
-      } else if (!mod && (key === "delete" || key === "backspace") && sel) {
+      } else if (!mod && (key === "delete" || key === "backspace") && doc?.selectedIds.length) {
         e.preventDefault();
-        edit((d) => removeLayer(d, sel.id));
+        edit((d) => removeLayers(d, d.selectedIds));
+      } else if (mod && key === "a" && doc) {
+        e.preventDefault();
+        select(doc.layers.map((l) => l.id));
+      } else if (key === "escape" && doc) {
+        select([]);
+      } else if (mod && key === "d" && doc?.selectedIds.length) {
+        e.preventDefault();
+        edit((d) => duplicateLayers(d, d.selectedIds));
+      } else if (mod && (key === "]" || key === "[") && sel) {
+        e.preventDefault();
+        edit((d) => moveLayer(d, sel.id, key === "]" ? 1 : -1));
+      } else if (!mod && key.startsWith("arrow") && doc?.selectedIds.length && section !== "brush") {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const [dx, dy] = { arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, -step], arrowdown: [0, step] }[key] ?? [0, 0];
+        const patches = new Map(doc.layers.filter((l) => doc.selectedIds.includes(l.id)).map((l) => [l.id, { x: l.x + dx, y: l.y + dy }]));
+        edit((d) => updateLayers(d, patches), "nudge");
+      } else if (e.key === "?") {
+        setShowShortcuts(true);
       } else if (!mod && key === "x") setBrush((b) => ({ ...b, mode: b.mode === "erase" ? "restore" : "erase" }));
       else if (!mod && key === "[") setBrush((b) => ({ ...b, size: Math.max(4, Math.round(b.size / 1.2)) }));
       else if (!mod && key === "]") setBrush((b) => ({ ...b, size: Math.min(300, Math.round(b.size * 1.2)) }));
@@ -272,7 +324,9 @@ export default function App() {
         onToggleTheme={() => setDark(!dark)}
         lang={lang}
         onLanguage={setLang}
+        onShortcuts={() => setShowShortcuts(true)}
       />
+      <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
       <input
         ref={fileInput}
         type="file"
@@ -317,20 +371,24 @@ export default function App() {
         </nav>
 
         <main className="flex min-w-0 flex-1 flex-col">
-          <Workspace
-            doc={doc}
-            tool={section === "brush" ? "brush" : "move"}
-            brush={brush}
-            onSelect={select}
-            onMoveLayer={(id, x, y, gesture) => editLayer(id, { x, y }, `move-${gesture}`)}
-            onMaskPainted={(id, mask) => editLayer<ImageLayer>(id, { mask })}
-            onEditText={(id) => {
-              select(id);
-              setSection("text");
-            }}
-            onFiles={(files) => importFiles(files, true)}
-            onPick={() => fileInput.current?.click()}
-          />
+          {section === "batch" ? (
+            <BatchView items={batch.items} onAdd={batch.add} onRemove={batch.remove} />
+          ) : (
+            <Workspace
+              doc={doc}
+              tool={section === "brush" ? "brush" : "move"}
+              brush={brush}
+              onSelect={select}
+              onTransform={(patches, gesture) => edit((d) => updateLayers(d, patches), `transform-${gesture}`)}
+              onMaskPainted={(id, mask) => editLayer<ImageLayer>(id, { mask })}
+              onEditText={(id) => {
+                select([id]);
+                setSection("text");
+              }}
+              onFiles={(files) => importFiles(files, true)}
+              onPick={() => fileInput.current?.click()}
+            />
+          )}
           <footer className="flex h-8 shrink-0 items-center gap-4 border-t border-line bg-panel px-4 text-xs text-muted">
             <span>{doc ? `${doc.width} × ${doc.height} px` : t("app.noImage")}</span>
             {lastRun && <span>{t("app.localAi", { info: lastRun })}</span>}
@@ -352,7 +410,19 @@ export default function App() {
               </button>
             </div>
           )}
-          {!doc && section !== "remove" && hint("app.importFirst")}
+          {!doc && section !== "remove" && section !== "batch" && hint("app.importFirst")}
+          {section === "batch" && (
+            <BatchPanel
+              items={batch.items}
+              running={batch.running}
+              cancelling={batch.cancelling}
+              modelId={modelId}
+              onStart={batch.start}
+              onCancel={batch.cancel}
+              onClear={batch.clear}
+              onOpenModel={() => setSection("remove")}
+            />
+          )}
           {section === "remove" && (
             <>
               <RemovePanel
@@ -382,11 +452,13 @@ export default function App() {
             <LayersPanel
               doc={doc}
               onSelect={select}
-              onAddImage={addImage}
+              onAddImage={(files) => addImages(files)}
               onAddText={addText}
-              onUpdate={(id, patch, coalesce) => editLayer(id, patch, coalesce)}
+              onUpdate={editLayers}
               onMove={(id, delta) => edit((d) => moveLayer(d, id, delta))}
-              onRemove={(id) => edit((d) => removeLayer(d, id))}
+              onRemove={(ids) => edit((d) => removeLayers(d, ids))}
+              onDuplicate={() => edit((d) => duplicateLayers(d, d.selectedIds))}
+              onAlign={(how) => edit((d) => updateLayers(d, align(d, d.selectedIds, how, measureText)))}
             />
           )}
           {doc && section === "text" && (

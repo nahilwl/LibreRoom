@@ -1,6 +1,6 @@
 import { AppError } from "../i18n";
 import { maskFromAlpha, newCanvas, type BackgroundState } from "./compose";
-import { FONT_STACKS, LINE_HEIGHT, intrinsicSize, type Doc, type Layer, type TextLayer } from "./document";
+import { FONT_STACKS, LINE_HEIGHT, intrinsicSize, type Doc, type Layer, type Shadow, type TextLayer } from "./document";
 
 const measureCtx = newCanvas(1, 1).getContext("2d")!;
 
@@ -67,6 +67,17 @@ function drawText(ctx: CanvasRenderingContext2D, l: TextLayer, width: number) {
   lines(l).forEach((s, i) => ctx.fillText(s, x, i * l.size * LINE_HEIGHT + (l.size * (LINE_HEIGHT - 1)) / 2));
 }
 
+const rgba = (hex: string, alpha: number) =>
+  `rgba(${parseInt(hex.slice(1, 3), 16)}, ${parseInt(hex.slice(3, 5), 16)}, ${parseInt(hex.slice(5, 7), 16)}, ${alpha})`;
+
+/** Canvas shadows ignore the transform (they are in target pixels), hence the view scale. */
+function setShadow(ctx: CanvasRenderingContext2D, shadow: Shadow | null, scale: number) {
+  ctx.shadowColor = shadow ? rgba(shadow.color, shadow.opacity) : "transparent";
+  ctx.shadowBlur = shadow ? shadow.blur * scale : 0;
+  ctx.shadowOffsetX = shadow ? shadow.x * scale : 0;
+  ctx.shadowOffsetY = shadow ? shadow.y * scale : 0;
+}
+
 export interface RenderOptions {
   /** Mask being painted right now (brush stroke in progress), drawn instead of the layer's mask. */
   liveMask?: { layerId: string; canvas: HTMLCanvasElement };
@@ -91,6 +102,7 @@ export function renderDoc(ctx: CanvasRenderingContext2D, doc: Doc, view: View, s
     if (!layer.visible || layer.opacity <= 0) continue;
     const size = sizeOf(layer);
     ctx.globalAlpha = layer.opacity;
+    setShadow(ctx, layer.shadow, view.scale);
     if (layer.kind === "text") {
       applyLayerTransform(ctx, view, layer, size);
       drawText(ctx, layer, size.width);

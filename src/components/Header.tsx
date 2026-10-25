@@ -16,6 +16,7 @@ interface Props {
   onToggleTheme: () => void;
   lang: Language;
   onLanguage: (l: Language) => void;
+  onShortcuts: () => void;
 }
 
 const iconButton = "rounded-lg p-2 text-muted transition hover:bg-raised hover:text-ink disabled:opacity-35 disabled:hover:bg-transparent";
@@ -66,6 +67,9 @@ export function Header(p: Props) {
             </option>
           ))}
         </select>
+        <button className="btn px-2.5" onClick={p.onShortcuts} aria-label={t("shortcuts.open")} title={t("shortcuts.open")}>
+          <Icon name="keyboard" className="size-4" />
+        </button>
         <button className="btn px-2.5" onClick={p.onToggleTheme} aria-label={p.dark ? t("header.lightMode") : t("header.darkMode")} title={p.dark ? t("header.lightMode") : t("header.darkMode")}>
           <Icon name={p.dark ? "sun" : "moon"} className="size-4" />
         </button>

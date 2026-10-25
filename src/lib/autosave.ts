@@ -12,7 +12,7 @@ const STORE = "autosave";
 const KEY = "current";
 
 /** Bumped when DocBlobs changes shape; older records are ignored. */
-const RECORD_VERSION = 2;
+const RECORD_VERSION = 3;
 export type AutosaveRecord = DocBlobs & { savedAt: number; version: number };
 
 function openDb(): Promise<IDBDatabase> {

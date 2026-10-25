@@ -39,7 +39,9 @@ Available in **0.1** (tested automatically):
 |---|---|
 | ✂️ **AI background removal** | Local model (ISNet): native ONNX Runtime on desktop (~1.3 s per photo on a laptop CPU), WebAssembly/WebGPU in the browser |
 | 🖌️ **Refine brush** | Erase leftovers or restore parts of the subject; hold-to-compare with the original |
-| 🧱 **Layers** | Stack several images and texts; move them by dragging, resize, rotate, change opacity, hide, reorder, delete |
+| 🧱 **Layers** | Stack images and texts; drag, resize and rotate them with handles; smart guides and alignment; multiple selection |
+| 🌑 **Shadows** | Soft drop shadows that follow the cut-out or the letters |
+| 🗂️ **Batch processing** | Remove the background of many photos in one go, with progress, cancel and ZIP download |
 | 🔤 **Text** | Multi-line text with font family, size, bold/italic, colour and alignment |
 | 🎨 **New background** | Transparent, any colour, or your own image |
 | 📤 **Export** | PNG (transparent), JPG or WebP at any width; tested up to 48 megapixels |
@@ -48,7 +50,7 @@ Available in **0.1** (tested automatically):
 | 🌗 **Light and dark themes** | English and French interface |
 | 🖥️ **Desktop and web** | Native Linux app (Tauri 2), or any Chromium-based browser |
 
-On the [roadmap](CHANGELOG.md#roadmap): customisable shadows, resizing (canvas and handles), batch processing, object removal with local AI, colour adjustments and upscaling.
+On the [roadmap](CHANGELOG.md#roadmap): canvas resizing, colour adjustments, object removal with local AI and upscaling.
 
 ## Screenshots
 
@@ -58,7 +60,7 @@ On the [roadmap](CHANGELOG.md#roadmap): customisable shadows, resizing (canvas a
 <td width="50%"><img src="docs/assets/web-cutout.png" alt="Background removed from a photo of sneakers, transparent checkerboard behind"><br><sub>Background removed (web version)</sub></td>
 </tr>
 <tr>
-<td><img src="docs/assets/web-background.png" alt="Sneakers placed on a light blue background, background colour panel open"><br><sub>Choosing a new background</sub></td>
+<td><img src="docs/assets/batch.png" alt="Batch view: three photos processed with download buttons, one broken file marked as failed"><br><sub>Batch processing</sub></td>
 <td><img src="docs/assets/web-layers-text.png" alt="Cut-out sneakers with a red SALE text layer selected above them"><br><sub>Layers and text</sub></td>
 </tr>
 </table>

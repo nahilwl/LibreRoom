@@ -1,19 +1,28 @@
 /**
  * LibreRoom project file (*.libreroom): a single self-contained JSON document.
  * Images are embedded as data URLs so a project can be moved or shared as one file.
- * Version 2 holds a stack of layers; version 1 files (one image) are migrated on load.
+ * Version 3 adds per-layer shadows and multiple selection; v2 (layers) and v1 (one image)
+ * files are migrated on load.
  * shortcut: embedding duplicates large images in memory while saving; switch to a zip
  * container with external image files if projects with many large layers become common.
  */
 import { AppError, t, type MessageKey } from "../i18n";
 
 export const PROJECT_FORMAT = "libreroom";
-export const PROJECT_VERSION = 2;
+export const PROJECT_VERSION = 3;
 
 export type Background =
   | { type: "transparent" }
   | { type: "color"; color: string }
   | { type: "image"; dataUrl: string };
+
+export interface ProjectShadow {
+  color: string;
+  opacity: number;
+  blur: number;
+  x: number;
+  y: number;
+}
 
 interface LayerFields {
   name: string;
@@ -23,6 +32,7 @@ interface LayerFields {
   y: number;
   scale: number;
   rotation: number;
+  shadow: ProjectShadow | null;
 }
 export type ProjectLayer =
   | (LayerFields & { kind: "image"; source: string; mask: string | null; modelId: string | null })
@@ -39,15 +49,15 @@ export type ProjectLayer =
 
 export interface ProjectFile {
   format: typeof PROJECT_FORMAT;
-  version: 2;
+  version: 3;
   name: string;
   width: number;
   height: number;
   background: Background;
   /** Bottom to top. */
   layers: ProjectLayer[];
-  /** Index of the selected layer, or -1. */
-  selected: number;
+  /** Indices of the selected layers. */
+  selected: number[];
   savedAt: string;
 }
 
@@ -93,7 +103,7 @@ export function parseProject(text: string): ProjectFile {
   // Version 1: one image filling the canvas.
   const rawLayers: unknown[] =
     p.version === 1
-      ? [{ kind: "image", name: p.name, visible: true, opacity: 1, x: width / 2, y: height / 2, scale: 1, rotation: 0, source: p.source, mask: p.mask, modelId: p.modelId }]
+      ? [{ kind: "image", name: p.name, visible: true, opacity: 1, x: width / 2, y: height / 2, scale: 1, rotation: 0, shadow: null, source: p.source, mask: p.mask, modelId: p.modelId }]
       : Array.isArray(p.layers)
         ? p.layers
         : fail("error.projectLayers");
@@ -104,6 +114,11 @@ export function parseProject(text: string): ProjectFile {
     const okTransform =
       num(l.opacity, 0, 1) && num(l.x, -1e6, 1e6) && num(l.y, -1e6, 1e6) && num(l.scale, 1e-4, 1e3) && num(l.rotation, -1e4, 1e4);
     if (!okTransform) fail("error.projectLayers");
+    const sh = l.shadow;
+    const shadowOk =
+      sh === null || sh === undefined ||
+      (isObj(sh) && typeof sh.color === "string" && HEX.test(sh.color) && num(sh.opacity, 0, 1) && num(sh.blur, 0, 1000) && num(sh.x, -1e4, 1e4) && num(sh.y, -1e4, 1e4));
+    if (!shadowOk) fail("error.projectLayers");
     const fields: LayerFields = {
       name: str(l.name, 200, ""),
       visible: l.visible !== false,
@@ -112,6 +127,7 @@ export function parseProject(text: string): ProjectFile {
       y: l.y as number,
       scale: l.scale as number,
       rotation: l.rotation as number,
+      shadow: isObj(sh) ? { color: sh.color as string, opacity: sh.opacity as number, blur: sh.blur as number, x: sh.x as number, y: sh.y as number } : null,
     };
     if (l.kind === "image") {
       if (typeof l.source !== "string" || !DATA_IMAGE.test(l.source)) fail("error.projectSource");
@@ -130,10 +146,13 @@ export function parseProject(text: string): ProjectFile {
     return fail("error.projectLayers");
   });
 
-  const selected = Number.isInteger(p.selected) && num(p.selected, -1, layers.length - 1) ? (p.selected as number) : layers.length - 1;
+  const validIndex = (i: unknown) => Number.isInteger(i) && num(i, 0, layers.length - 1);
+  const rawSelected = Array.isArray(p.selected) ? p.selected : [p.selected]; // v2 stored one index
+  const picked = [...new Set(rawSelected.filter(validIndex) as number[])];
+  const selected = picked.length || !layers.length ? picked : [layers.length - 1];
   return {
     format: PROJECT_FORMAT,
-    version: 2,
+    version: 3,
     name: str(p.name, 200, "").trim() || t("untitled"),
     width,
     height,

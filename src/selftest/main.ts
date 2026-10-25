@@ -6,17 +6,19 @@
  *   ?mode=offline : the model must already be installed; the network must be unreachable
  *   ?mode=compare : both engines (native, browser) on the same images: time and mask agreement
  *   ?mode=stress  : 5 consecutive removals + exports, with phase markers for memory sampling
+ *   ?mode=batch   : the batch pipeline on 10 images (marks per image), for memory sampling
  *   &engine=native|browser selects the engine (default: the platform's).
  */
 import { invoke } from "@tauri-apps/api/core";
 import fixtureUrl from "../../tests/fixtures/sneakers-cc0.jpg?url";
-import { docFromImage, textLayer, addLayer, updateLayer, type ImageLayer } from "../lib/document";
+import { DEFAULT_SHADOW, docFromImage, textLayer, addLayer, updateLayer, type ImageLayer } from "../lib/document";
 import { exportImage } from "../lib/render";
-import { decodeImage, openProject, serializeProject } from "../lib/files";
+import { decodeImage, openProject, saveBlob, serializeProject } from "../lib/files";
 import { MODELS } from "../lib/models";
 import { downloadModel, isDownloaded } from "../lib/modelStore";
 import { defaultEngine, type Engine } from "../lib/platform";
 import { releaseSegmenter, segment } from "../lib/segmenter";
+import { runBatch, type BatchItem } from "../lib/batch";
 
 const params = new URLSearchParams(location.search);
 const mode = params.get("mode") ?? "online";
@@ -65,13 +67,16 @@ async function basic() {
 
   let doc = docFromImage("selftest", blob, image);
   doc = updateLayer<ImageLayer>(doc, doc.layers[0].id, { mask: res.mask, aiMask: res.mask, modelId: model.id });
-  doc = addLayer(doc, textLayer("Title", "LibreRoom", 640, 100, 80));
+  doc = addLayer(doc, { ...textLayer("Title", "LibreRoom", 640, 100, 80), shadow: DEFAULT_SHADOW, rotation: -8 });
+  doc = { ...doc, selectedIds: doc.layers.map((l) => l.id) };
   const png = await exportImage(doc, 640, "png", 1);
   checks.exportPng = png.type === "image/png" && png.size > 1000;
   const reopened = await openProject(await (await serializeProject(doc)).text());
   const [img, txt] = reopened.layers;
   checks.projectRoundTrip =
-    reopened.width === 1280 && img?.kind === "image" && !!img.mask && img.mask.length === res.mask.length && txt?.kind === "text" && txt.text === "LibreRoom";
+    reopened.width === 1280 && img?.kind === "image" && !!img.mask && img.mask.length === res.mask.length &&
+    txt?.kind === "text" && txt.text === "LibreRoom" && txt.rotation === -8 && txt.shadow?.blur === DEFAULT_SHADOW.blur &&
+    reopened.selectedIds.length === 2;
 }
 
 /** Runs both engines on the same images and compares the masks pixel by pixel. */
@@ -143,7 +148,42 @@ async function stress() {
   await mark("end");
 }
 
-const run = mode === "compare" ? compare : mode === "stress" ? stress : basic;
+/** Triggers a real UI download, as the Export and Save buttons do; the script checks the file. */
+async function download() {
+  saveBlob(new Blob([`libreroom-download-${Date.now()}`], { type: "text/plain" }), "libreroom-download-test.txt");
+  await pause(3000);
+  checks.triggered = true;
+}
+
+/** Batch pipeline on 10 photos of mixed sizes; one mark per finished image. */
+async function batch() {
+  checks.modelInstalled = await isDownloaded(model, engine);
+  const { blob, image } = await fixture();
+  const sizes = [[1280, 742], [2560, 1484], [640, 371], [4000, 2319], [1280, 742], [2560, 1484], [640, 371], [4000, 2319], [1280, 742], [2560, 1484]];
+  const items: BatchItem[] = [];
+  for (const [i, [w, h]] of sizes.entries()) {
+    const c = new OffscreenCanvas(w, h);
+    c.getContext("2d")!.drawImage(image, 0, 0, w, h);
+    items.push({ id: `b${i}`, file: new File([await c.convertToBlob({ type: "image/jpeg", quality: 0.9 })], `p${i}.jpg`, { type: "image/jpeg" }), status: "queued" });
+  }
+  void blob;
+  await mark("batch-start");
+  const results: BatchItem[] = [];
+  let n = 0;
+  await runBatch(items, { removeBackground: true, modelId: model.id, background: null, format: "png", quality: 1, maxSide: null }, new AbortController().signal, (id, patch) => {
+    if (patch.status === "done" || patch.status === "error") {
+      results.push({ ...items.find((i) => i.id === id)!, ...patch });
+      void mark(`image-${++n}`);
+    }
+  });
+  checks.allDone = results.length === 10 && results.every((r) => r.status === "done" && r.result!.blob.size > 1000);
+  report.batchMs = results.map((r) => r.ms);
+  await mark("batch-end");
+  await pause(20_000); // past the native engine's 15 s idle release
+  await mark("end");
+}
+
+const run = mode === "compare" ? compare : mode === "stress" ? stress : mode === "download" ? download : mode === "batch" ? batch : basic;
 run()
   .catch((e) => {
     report.error = String((e as Error)?.stack ?? e);

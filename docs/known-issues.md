@@ -8,7 +8,9 @@
 | WebKitWebDriver is unavailable on Ubuntu 26.04 | No UI automation inside the desktop window | The in-app self-test covers the engine. UI flows are tested in Chromium. |
 | Windows and macOS untested | Unknown behaviour | Help wanted! |
 | Web version on GitHub Pages runs single-threaded | About 2× slower | See [web-deployment.md](web-deployment.md). |
-| Layer handles (corner resize, rotation) are not on the canvas yet | Use the Layers panel sliders | Planned with the resizing feature. |
 | The `.deb` package is named `libre-room` (derived by Tauri from the product name) | Cosmetic | Rename before the first release. |
 | A brush stroke on a very large image (48 MP) copies the mask once at stroke start and reads it back at the end | Short pause at both ends | Region-based mask updates later. |
 | EXIF orientation is applied by the browser decoder, but not covered by a test | — | Add a rotated fixture. |
+| Desktop app: Export, Save and batch downloads go straight to the Downloads folder, without asking where | You cannot pick the folder | Native "Save as" dialog planned. |
+| Batch results are kept in memory until the list is cleared | Very large batches use more RAM (about the size of the output files) | Clear the list after downloading; streaming to disk planned for the desktop app. |
+| Resizing is uniform only (no stretching), and the canvas itself cannot be resized yet | — | Canvas presets planned. |

@@ -48,13 +48,18 @@ async function exportAlpha(page, points) {
       const c = new OffscreenCanvas(bmp.width, bmp.height).getContext("2d");
       c.drawImage(bmp, 0, 0);
       const d = c.getImageData(0, 0, bmp.width, bmp.height).data;
-      let red = 0, sy = 0;
-      for (let i = 0; i < d.length; i += 4)
+      let red = 0, sy = 0, minX = Infinity, darkTop = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const [x, y] = [(i / 4) % bmp.width, Math.floor(i / 4 / bmp.width)];
         if (d[i + 3] > 200 && d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) {
           red++;
-          sy += Math.floor(i / 4 / bmp.width);
+          sy += y;
+          minX = Math.min(minX, x);
         }
-      return { w: bmp.width, h: bmp.height, alpha: pts.map(([x, y]) => d[(y * bmp.width + x) * 4 + 3]), red, redY: red ? Math.round(sy / red) : null };
+        // Shadow pixels: dark, semi-transparent or opaque, in the empty upper part of the photo.
+        if (y < 260 && d[i + 3] > 30 && Math.max(d[i], d[i + 1], d[i + 2]) < 70) darkTop++;
+      }
+      return { w: bmp.width, h: bmp.height, alpha: pts.map(([x, y]) => d[(y * bmp.width + x) * 4 + 3]), red, redY: red ? Math.round(sy / red) : null, redMinX: red ? minX : null, darkTop };
     },
     [readFileSync(path).toString("base64"), points],
   );
@@ -137,6 +142,80 @@ assert.equal(r.red, redCount, "undo brings the layer back");
 assert.equal(r.alpha[1], 0, "the image mask is unchanged");
 console.log("layers and text OK");
 
+// Transform handles on the canvas (the text is selected, centred at (640, 120), font size 74).
+await button(page, "Layers").click();
+const box = await page.evaluate(() => {
+  const c = document.createElement("canvas").getContext("2d");
+  c.font = '700 74px ui-sans-serif, system-ui, "Segoe UI", Roboto, "Noto Sans", sans-serif';
+  return { w: Math.ceil(c.measureText("SALE").width), h: Math.ceil(74 * 1.2) };
+});
+const tl = [640 - box.w / 2, 120 - box.h / 2];
+await page.mouse.move(...toPage(tl[0] + box.w, tl[1] + box.h)); // bottom-right handle
+await page.mouse.down();
+await page.mouse.move(...toPage(tl[0] + 1.5 * box.w, tl[1] + 1.5 * box.h), { steps: 6 });
+await page.mouse.up();
+await page.getByText("Size: 150 %").waitFor();
+r = await exportAlpha(page, probe);
+assert(r.red > 1.8 * redCount, "resized text is bigger");
+const centre = [tl[0] + 0.75 * box.w, tl[1] + 0.75 * box.h];
+const [kx, ky] = toPage(centre[0], centre[1] - 0.75 * box.h);
+await page.mouse.move(kx, ky - 28); // rotation knob, 28 px above the top edge
+await page.mouse.down();
+await page.mouse.move(...toPage(centre[0] + 300, centre[1]), { steps: 6 });
+await page.mouse.up();
+await button(page, "Layers").click(); // the export check above switched the panel
+await page.getByText("Rotation: 90°").waitFor();
+await page.screenshot({ path: `${out}/04c-handles.png` });
+await page.keyboard.press("Control+z"); // undo rotation (one drag = one step)
+await page.getByText("Rotation: 0°").waitFor();
+await page.keyboard.press("Control+z"); // undo resize
+await page.getByText("Size: 100 %").waitFor();
+console.log("resize and rotate handles OK");
+
+// Multiple selection and alignment.
+await page.keyboard.press("Control+a");
+await page.getByText("2 layers selected").waitFor();
+await button(page, "Align left").click();
+r = await exportAlpha(page, probe);
+assert(r.redMinX < 15, `text aligned to the left edge (min x ${r.redMinX})`);
+await page.keyboard.press("Control+z");
+r = await exportAlpha(page, probe);
+assert(r.redMinX > 500, "undo restores the position");
+await button(page, "Layers").click();
+await page.keyboard.press("Escape");
+assert.equal(await page.getByText("Selected layer", { exact: true }).count(), 0, "Esc clears the selection");
+// Marquee from an empty (transparent) area around the text selects only the text.
+await page.mouse.move(...toPage(380, 15));
+await page.mouse.down();
+await page.mouse.move(...toPage(900, 250), { steps: 6 });
+await page.mouse.up();
+await page.getByText("Selected layer", { exact: true }).waitFor();
+assert.equal(await page.getByRole("button", { name: "SALE", pressed: true }).count(), 1, "marquee selected the text layer");
+console.log("multiple selection, alignment, marquee OK");
+
+// Shadow, duplicate, nudge.
+const before = (await exportAlpha(page, probe)).darkTop;
+await button(page, "Layers").click();
+await page.getByRole("checkbox", { name: "Drop shadow" }).check();
+r = await exportAlpha(page, probe);
+console.log("shadow: dark pixels", before, "→", r.darkTop);
+assert(r.darkTop > before + 500, "the shadow is drawn and exported");
+const shadowDark = r.darkTop;
+const redWithShadow = r.red; // the shadow under anti-aliased glyph edges changes a few pixels
+await button(page, "Layers").click();
+await page.keyboard.press("Control+d");
+assert.equal(await page.getByRole("list", { name: "Layer list" }).getByRole("listitem").count(), 3, "Ctrl+D duplicates");
+r = await exportAlpha(page, probe);
+assert(r.red > 1.3 * redCount, "the copy is drawn");
+const yBefore = r.redY;
+await page.keyboard.press("Shift+ArrowDown");
+await page.keyboard.press("Shift+ArrowDown");
+r = await exportAlpha(page, probe);
+assert(r.redY > yBefore + 5, "arrow keys nudge the selection");
+await page.keyboard.press("Delete");
+assert.equal((await exportAlpha(page, probe)).red, redWithShadow, "the copy is deleted");
+console.log("shadow, duplicate, nudge OK");
+
 const [proj] = await Promise.all([page.waitForEvent("download"), page.keyboard.press("Control+s")]);
 const projPath = `${out}/${proj.suggestedFilename()}`;
 await proj.saveAs(projPath);
@@ -146,7 +225,8 @@ await fileInput(page).setInputFiles(projPath);
 await page.getByText("1280 × 742 px").waitFor();
 r = await exportAlpha(page, probe);
 assert.deepEqual(r.alpha.slice(0, 2), [0, 0], "reopened project keeps the mask");
-assert.equal(r.red, redCount, "reopened project keeps the text layer");
+assert.equal(r.red, redWithShadow, "reopened project keeps the text layer");
+assert.equal(r.darkTop, shadowDark, "reopened project keeps the shadow");
 console.log("project reopened OK");
 
 await button(page, "Switch to dark mode").click();
@@ -175,6 +255,76 @@ page = await newPage();
 await page.waitForTimeout(1000);
 assert.equal(await page.getByText("Unsaved work was recovered").count(), 0, "no recovery after a save");
 console.log("crash recovery OK");
+
+// Dropping several images onto an empty editor: the first opens, the others become layers.
+await page.evaluate(async () => {
+  const make = async (color) => {
+    const c = new OffscreenCanvas(320, 200);
+    const x = c.getContext("2d");
+    x.fillStyle = color;
+    x.fillRect(0, 0, 320, 200);
+    return new File([await c.convertToBlob({ type: "image/png" })], `${color.slice(1)}.png`, { type: "image/png" });
+  };
+  const dt = new DataTransfer();
+  dt.items.add(await make("#3366cc"));
+  dt.items.add(await make("#cc3366"));
+  document.querySelector("main > div").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+});
+await page.getByText("320 × 200 px").waitFor();
+await button(page, "Layers").click();
+assert.equal(await page.getByRole("list", { name: "Layer list" }).getByRole("listitem").count(), 2, "two dropped images, two layers");
+console.log("multi-image drop OK");
+
+// ---------- batch ----------
+const pngOf = (color, w, h) =>
+  page.evaluate(
+    async ([color, w, h]) => {
+      const c = new OffscreenCanvas(w, h);
+      const x = c.getContext("2d");
+      x.fillStyle = "#f2f2f2";
+      x.fillRect(0, 0, w, h);
+      x.fillStyle = color;
+      x.beginPath();
+      x.arc(w / 2, h / 2, Math.min(w, h) / 4, 0, 7);
+      x.fill();
+      const b = new Uint8Array(await (await c.convertToBlob({ type: "image/png" })).arrayBuffer());
+      let s = "";
+      for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+      return btoa(s);
+    },
+    [color, w, h],
+  ).then((b64) => Buffer.from(b64, "base64"));
+await button(page, "Batch").click();
+const batchInput = page.locator('input[type=file][multiple]').first();
+await batchInput.setInputFiles([
+  { name: "sneakers-cc0.jpg", mimeType: "image/jpeg", buffer: readFileSync(img) },
+  { name: "red.png", mimeType: "image/png", buffer: await pngOf("#c0392b", 900, 600) },
+  { name: "blue.png", mimeType: "image/png", buffer: await pngOf("#2f6fdf", 600, 900) },
+  { name: "broken.png", mimeType: "image/png", buffer: Buffer.from("this is not a png") },
+]);
+t0 = Date.now();
+await button(page, "Process 4 images").click();
+await page.getByText("3 done · 1 failed · 0 cancelled").waitFor({ timeout: 300_000 });
+console.log("batch of 4 (1 broken):", Date.now() - t0, "ms");
+await page.screenshot({ path: `${out}/07-batch.png` });
+const [zip] = await Promise.all([page.waitForEvent("download"), button(page, "Download all (ZIP)").click()]);
+const zipPath = `${out}/${zip.suggestedFilename()}`;
+await zip.saveAs(zipPath);
+const { execFileSync } = await import("node:child_process");
+const listing = JSON.parse(
+  execFileSync("python3", ["-I", "-c", "import zipfile,sys,json; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; print(json.dumps(sorted(z.namelist())))", zipPath], { encoding: "utf8" }),
+);
+assert.deepEqual(listing, ["blue-libreroom.png", "red-libreroom.png", "sneakers-cc0-libreroom.png"], "ZIP holds the 3 results");
+// Cancel: queue 6 more, stop after the first finishes.
+await batchInput.setInputFiles(await Promise.all([1, 2, 3, 4, 5, 6].map(async (n) => ({ name: `more-${n}.png`, mimeType: "image/png", buffer: await pngOf("#0d8a76", 1200, 800) }))));
+await button(page, "Process 7 images").click(); // 6 new + the broken one, re-queued
+await page.getByText("Done").nth(3).waitFor({ timeout: 300_000 });
+await button(page, "Cancel").click();
+await page.getByText(/· \d+ cancelled/).waitFor({ timeout: 300_000 });
+const summary = await page.getByText(/done · \d+ failed/).textContent();
+console.log("after cancel:", summary);
+assert(/ [1-9]\d* cancelled/.test(summary), "remaining images are cancelled");
+console.log("batch OK");
 
 // ---------- 3. formats and resolutions ----------
 const cases = [
@@ -211,7 +361,7 @@ for (const [format, w, h] of cases) {
     const segMs = Date.now() - t0;
     t0 = Date.now();
     r = await exportAlpha(page, [[5, 5], [Math.floor(w / 2), Math.floor(h / 2)]]);
-    console.log(`${format} ${w}x${h}: remove bg ${segMs} ms, export PNG ${Date.now() - t0} ms, alpha`, r.alpha);
+    console.log(`${format} ${w}x${h}: remove bg ${segMs} ms, export + pixel check ${Date.now() - t0} ms, alpha`, r.alpha);
     assert.deepEqual([r.w, r.h], [w, h]);
     assert(r.alpha[0] < 16 && r.alpha[1] > 240, "disc kept, corner removed");
     await button(page, "Remove BG").click();

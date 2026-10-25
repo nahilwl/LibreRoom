@@ -11,11 +11,13 @@ No server is involved, ever.
 ```
 ┌─────────────────────────────── UI thread (WebView / browser) ───────────────────────────────┐
 │ App.tsx        immutable Doc state, undo/redo (History<Doc>), shortcuts, saving             │
-│  ├ Header, Workspace (canvas: zoom/pan, select & move layers, mask brush, compare)          │
-│  └ panels/     Remove BG · Refine · Layers · Text · Background · Export                     │
+│  ├ Header, Workspace (canvas: zoom/pan, selection, handles, snapping guides, mask brush)    │
+│  ├ BatchView   batch queue (replaces the canvas in Batch mode)                              │
+│  └ panels/     Remove BG · Refine · Layers · Text · Background · Export · Batch             │
 │ lib/document   Doc / Layer model (image & text layers), pure edit functions, hit-testing    │
 │ lib/render     layer compositing for screen and export; text measuring; mask canvas cache  │
-│ lib/files      import/decoding, .libreroom v2 files (validated), Doc ⇄ blobs                │
+│ lib/files      import/decoding, .libreroom v3 files (validated), Doc ⇄ blobs                │
+│ lib/batch      sequential batch pipeline, naming; lib/zip: stored ZIP writer                │
 │ hooks/         useAutosave (IndexedDB), usePreferences (theme, language)                    │
 │ i18n/          English (default) and French                                                 │
 └──────────────┬───────────────────────────────────────────────────────────────────────────────┘
@@ -67,7 +69,7 @@ ORT's WASM threads load the glue `.mjs` themselves, and with the bundled build i
 
 ### 5. Immutable document with layers
 
-`Doc` = canvas size, background, stack of layers (bottom → top), selected layer.
+`Doc` = canvas size, background, stack of layers (bottom → top), selected layers.
 
 - Layers are **image** layers (original file + bitmap + optional mask + AI mask) or **text** layers (text, font family, size, weight, style, colour, alignment).
 - Every layer has `x, y` (centre, canvas px), `scale`, `rotation`, `opacity` and `visible`.
@@ -78,20 +80,40 @@ ORT's WASM threads load the glue `.mjs` themselves, and with the bundled build i
 - A brush stroke paints on a temporary copy, and the new mask is committed once, at the end of the stroke.
 - **Hit-testing** follows rotation and scale, and ignores transparent pixels of cut-out subjects, so you can click "through" an empty area.
 
-### 6. Rendering
+### 6. Canvas interactions
+
+`Workspace` translates pointer gestures into document patches. The maths lives in `lib/document.ts` and is unit-tested.
+
+- **Selection**: click (topmost opaque pixel), Shift/Ctrl-click to toggle, or a marquee from an empty area (selects layers fully inside it). `Doc.selectedIds`, where the last id is the primary layer shown in the panels.
+- **Move**: all selected layers together. **Snapping**: the moving group's bounding box (rotation included) snaps its edges and centre to the canvas and to other visible layers within 6 screen px. Guides are drawn while snapping, and Alt disables it.
+- **Resize**: corner handles, uniform scale with the opposite corner fixed. The pointer is projected on the layer's diagonal, so this works on rotated layers. **Rotate**: a knob above the layer, with a gentle snap to right angles (or 15° steps with Shift).
+- Each gesture is one undo step: `onTransform(patches, gesture)` merges updates with the same gesture id.
+- **Align**: one layer to the canvas, several to their common bounds.
+- **Shadows**: Canvas 2D `shadow*` set per layer. They are scaled by the view, because canvas shadows ignore the transform. Masked layers are composited first, so the shadow follows the cut-out.
+
+### 7. Batch processing
+
+`lib/batch.ts` runs a queue strictly **sequentially**: decode one image → (AI mask with the shared engine) → background → `exportImage` → release the bitmap. Only one model is ever loaded (the engines keep a single session and free the previous one when the model changes), and only one source image is decoded at a time. Measured: memory is flat over 10 images (see [performance.md](performance.md#batch-processing-desktop-native-engine)).
+
+- Cancelling aborts before the next image; an inference that is running cannot be interrupted, so it finishes.
+- Errors are recorded per image and do not stop the batch.
+- Results are new blobs named `<name>-libreroom.<ext>`, unique and case-insensitive. Originals are never touched.
+- The ZIP writer (`lib/zip.ts`) uses the "stored" method: the images are already compressed. It is validated against Python's `zipfile`.
+
+### 8. Rendering
 
 `lib/render.ts` draws background, then each visible layer with its transform. Masked image layers are composited on a reusable scratch canvas (`destination-in`). The same function renders the screen, at display resolution, and the export, at any resolution. Content outside the canvas is clipped and never exported.
 
-### 7. Autosave, crash recovery, project format
+### 9. Autosave, crash recovery, project format
 
 - **Autosave**: 1.5 s after each change while there are unsaved changes, the document goes to IndexedDB as blobs. The record is versioned, and older versions are ignored. It is deleted on save or discard, so a record found at startup means unsaved work.
-- **`.libreroom` v2**: a self-contained JSON file. Images are data URLs (originals byte-for-byte), and masks are PNG. Everything is validated (`lib/project.ts`, unit-tested), including:
+- **`.libreroom` v3**: a self-contained JSON file (layers, shadows, multiple selection). Images are data URLs (originals byte-for-byte), and masks are PNG. Everything is validated (`lib/project.ts`, unit-tested), including:
   - dimensions, transforms, opacity, colours (hex only), fonts (enum);
   - text length and number of layers;
   - images as data URLs only, never a remote URL.
-- **v1 files migrate** to one full-canvas image layer.
+- **v1 files migrate** to one full-canvas image layer. **v2 files** gain empty shadows, and their single selected index becomes a list.
 
-### 8. Internationalisation
+### 10. Internationalisation
 
 Typed dictionaries in `src/i18n`: `en` is the reference, and TypeScript enforces that `fr` has every key. Libraries throw `AppError(key, params)`.
 
@@ -102,7 +124,7 @@ Typed dictionaries in `src/i18n`: `en` is the reference, and TypeScript enforces
 | Model, geometry, history, project validation | Vitest (`npm test`) |
 | Rust allow-list ⇄ frontend registry | `cargo test` |
 | Real model on a synthetic image | `LIBREROOM_MODEL_DIR=… npm test` |
-| Real user flows in Chromium: import, AI, brush, undo/redo, **layers and text** (add, edit, drag, hide, delete + undo), export, project save/reopen, crash recovery, formats up to 48 MP, privacy (allowed origins) | `npm run test:e2e` |
+| Real user flows in Chromium: import, AI, brush, undo/redo, layers and text, **resize/rotate handles** (+ undo), **multiple selection, alignment, marquee**, **shadow**, duplicate, nudge, export, project save/reopen, crash recovery, **multi-image drop**, **batch** (broken file, ZIP checked by Python, cancel), formats up to 48 MP, privacy (allowed origins) | `npm run test:e2e` |
 | Real desktop WebView: native engine, download/install, inference, export, project, **port conflict**, no listening socket, **offline** (CSP blocks every remote origin), optional engine comparison | `npm run test:tauri` (debug self-test page, `selftest` builds only) |
 
 WebKitWebDriver is not packaged for Ubuntu 26.04, so click-level automation inside the desktop window is not available. UI flows are covered in Chromium.
@@ -122,9 +144,8 @@ Planned in this order, one at a time.
 
 | Feature | Design |
 |---|---|
-| **Customisable shadows** | An optional `shadow` on `LayerBase` (`color`, `opacity`, `blur`, `offsetX/Y`, all in canvas px), rendered with Canvas 2D `shadowColor/shadowBlur/shadowOffset` when the layer is drawn. It follows the cut-out mask automatically. Project format v3 adds the field; v2 files load with no shadow. |
-| **Resizing** | Canvas: `doc.width/height` changes with an anchor (layers keep their positions relative to it), plus presets (square, 4:5, 16:9, marketplace sizes). Layers: corner and rotation handles in `Workspace`, reusing `toLayerLocal` for hit-testing; the panel sliders stay for precise values. |
-| **Batch processing** | A separate view that builds one `Doc` per input file (`docFromImage`), applies a *recipe* (remove background → background → canvas size → format) with the same pure functions, and exports with `exportImage`. It runs sequentially (one decoded image in memory), with progress and cancellation (`AbortController`); the AI engine stays loaded during the batch. On desktop, files go to a folder chosen with the native dialog, through a narrowly scoped Rust command. |
+| **Canvas resizing** | `doc.width/height` changes with an anchor (layers keep their positions relative to it), plus presets (square, 4:5, 16:9, marketplace sizes). |
+| **"Save as" on desktop** | `tauri-plugin-dialog` for the destination, plus a narrowly scoped Rust command that writes the chosen file. Batch can then write to a folder instead of a ZIP. |
 | **Object removal (local AI)** | An inpainting model (candidate: LaMa, Apache-2.0, ~208 MB, to be measured). The native engine generalises `run_model` to named inputs (image + mask). The user paints the area with the existing brush code. A crop around the area is inpainted at model resolution, then blended back into a **new image layer**, so the original stays intact. A light non-AI fallback (Telea inpainting) is planned for low-end machines. |
 
 ## Directory layout

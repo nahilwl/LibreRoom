@@ -8,13 +8,14 @@ Every number on this page comes from a run on the machine below, with the script
 
 | | Desktop (Tauri, native AI) | Web (Chromium 141, WASM AI) |
 |---|---|---|
-| Startup to UI loaded (release) | **0.28–0.42 s** | not measured |
-| Memory at idle (all processes, PSS) | **160–247 MB** | 329 MB (whole browser) |
-| CPU at idle | **0–0.3 %** | not measured |
+| Startup to UI loaded (release) | **0.30–0.40 s** | not measured |
+| Memory at idle (all processes, PSS) | **240–245 MB** | 329 MB (whole browser) |
+| CPU at idle | **0.1 %** | not measured |
 | Background removal, first / next (1280×742 photo) | **1.4–1.8 s / 1.2–1.4 s** | 2.3–2.9 s / 1.8–1.9 s |
 | Memory peak during AI | **1.27–1.35 GB**, stable across runs | 1.5 GB |
 | After AI | engine released after 15 s idle; process back to ~280 MB | worker released after 60 s idle |
-| Release binary / `.deb` | 35 MB / 15.5 MiB | — |
+| Batch, 10 photos (0.2–9 MP) | **1.2–1.9 s per image**, peak 1.35–1.47 GB, flat | 4 images incl. one broken: 6.4 s |
+| Release binary / `.deb` | 35 MB / 15.5 MiB | JS 97.5 KB gzip |
 
 ## Native vs WebAssembly on desktop
 
@@ -78,15 +79,40 @@ Four threads are kept, to leave cores to the UI and the system (8 threads gain 5
 
 BiRefNet-lite (fp32) natively on CPU: 4.8–6.0 s per image and **7.7 GB** max RSS. That is too heavy for the target machines, so it stays GPU-only.
 
+## Batch processing (desktop, native engine)
+
+Command: `python3 scripts/measure.py src-tauri/target/debug/libreroom 300 LIBREROOM_SELFTEST=batch`. 10 JPEG photos (1280×742, 2560×1484, 640×371 and 4000×2319, repeated), background removed, full-size PNG export.
+
+| | Result |
+|---|---|
+| Time per image | 1476, 1543, 1261, 1856, 1285, 1502, 1218, 1795, 1342, 1532 ms |
+| Peak memory while each image is processed | 1254, 1375, 1395, 1444, 1394, 1351, 1396, 1470, 1404, 1361 MB |
+| Average CPU | 258–341 % |
+| After the batch | engine released after 15 s idle; app at 390 MB, including the 10 results kept for download |
+
+Memory stays flat: one model and one decoded image at a time, whatever the batch length.
+
 ## Desktop startup and idle (release build)
 
 Command: `python3 scripts/measure.py src-tauri/target/release/libreroom 30 LIBREROOM_STARTUP_REPORT=1`. Startup is measured from process start to the WebView's "page load finished".
+
+Current version (layers, handles, shadows, batch):
+
+| Run | Startup | Idle PSS (last 10 s) | Idle CPU |
+|---|---|---|---|
+| 1 | 299 ms | 239.7 MB | 0.1 % |
+| 2 | 404 ms | 239.5 MB | 0.1 % |
+| 3 | 398 ms | 244.5 MB | 0.1 % |
+
+Previous version (before the editor features), for comparison:
 
 | Run | Startup | Idle PSS (last 10 s) | Idle CPU | Breakdown at end |
 |---|---|---|---|---|
 | 1 | 276 ms | 247.4 MB | 0.2 % | WebKitWebProcess 127.8, libreroom 91.4, network 19.2, glycin-svg 8.6 |
 | 2 | 405 ms | 182.3 MB | 0.0 % | 89.4 / 70.2 / 14.0 / 8.2 |
 | 3 | 420 ms | 160.4 MB | 0.3 % | 76.5 / 63.2 / 12.1 / 8.2 |
+
+Idle memory varies between runs (WebKit's garbage collector); the ranges overlap.
 
 ## Web version (Chromium)
 

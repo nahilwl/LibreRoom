@@ -49,7 +49,7 @@ const canvasToPng = (c: HTMLCanvasElement) =>
   new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new AppError("error.pngFailed"))), "image/png"));
 
 /** Document content as plain blobs and values: shared by project files and autosave. */
-type LayerFields = Pick<Layer, "name" | "visible" | "opacity" | "x" | "y" | "scale" | "rotation">;
+type LayerFields = Pick<Layer, "name" | "visible" | "opacity" | "x" | "y" | "scale" | "rotation" | "shadow">;
 export type LayerBlobs =
   | (LayerFields & { kind: "image"; sourceBlob: Blob; maskBlob: Blob | null; modelId: string | null })
   | (Extract<ProjectLayer, { kind: "text" }> & LayerFields);
@@ -59,10 +59,11 @@ export interface DocBlobs {
   height: number;
   background: { type: "transparent" } | { type: "color"; color: string } | { type: "image"; blob: Blob };
   layers: LayerBlobs[];
-  selected: number;
+  /** Indices of the selected layers. */
+  selected: number[];
 }
 
-const fieldsOf = (l: Layer): LayerFields => ({ name: l.name, visible: l.visible, opacity: l.opacity, x: l.x, y: l.y, scale: l.scale, rotation: l.rotation });
+const fieldsOf = (l: Layer): LayerFields => ({ name: l.name, visible: l.visible, opacity: l.opacity, x: l.x, y: l.y, scale: l.scale, rotation: l.rotation, shadow: l.shadow });
 
 export async function docToBlobs(doc: Doc): Promise<DocBlobs> {
   const bg = doc.background;
@@ -82,7 +83,7 @@ export async function docToBlobs(doc: Doc): Promise<DocBlobs> {
     height: doc.height,
     background: bg.type === "image" ? { type: "image", blob: bg.blob } : bg,
     layers,
-    selected: doc.layers.findIndex((l) => l.id === doc.selectedId),
+    selected: doc.layers.flatMap((l, i) => (doc.selectedIds.includes(l.id) ? [i] : [])),
   };
 }
 
@@ -116,7 +117,8 @@ export async function docFromBlobs(b: DocBlobs): Promise<Doc> {
   }
   const bg = b.background;
   const background = bg.type === "image" ? { type: "image" as const, blob: bg.blob, bitmap: await decodeImage(bg.blob) } : bg;
-  return { name: b.name, width: b.width, height: b.height, background, layers, selectedId: layers[b.selected]?.id ?? layers.at(-1)?.id ?? null };
+  const selectedIds = b.selected.map((i) => layers[i]?.id).filter((id): id is string => !!id);
+  return { name: b.name, width: b.width, height: b.height, background, layers, selectedIds };
 }
 
 export async function serializeProject(doc: Doc): Promise<Blob> {

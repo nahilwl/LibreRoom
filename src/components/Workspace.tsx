@@ -1,7 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import { maskAlpha, newCanvas } from "../lib/compose";
-import { hitTest, selectedLayer, toLayerLocal, type Doc, type ImageLayer, type Layer } from "../lib/document";
+import {
+  boundsOf,
+  hitTest,
+  layerCorners,
+  layersInRect,
+  resizeFromCorner,
+  rotationFromPointer,
+  selectedLayer,
+  selectedLayers,
+  snap,
+  toLayerLocal,
+  toggleSelected,
+  type Box,
+  type Doc,
+  type Guide,
+  type ImageLayer,
+  type Layer,
+} from "../lib/document";
 import { maskCanvas, measureText, renderDoc, sizeOf } from "../lib/render";
 import { Icon } from "./Icon";
 
@@ -16,9 +33,9 @@ interface Props {
   doc: Doc | null;
   tool: Tool;
   brush: BrushSettings;
-  onSelect: (id: string | null) => void;
+  onSelect: (ids: string[]) => void;
   /** Called repeatedly while dragging; `gesture` identifies one drag (one undo step). */
-  onMoveLayer: (id: string, x: number, y: number, gesture: number) => void;
+  onTransform: (patches: Map<string, Partial<Layer>>, gesture: number) => void;
   /** A brush stroke finished on an image layer: its new mask. */
   onMaskPainted: (id: string, mask: Uint8ClampedArray) => void;
   onEditText: (id: string) => void;
@@ -30,23 +47,58 @@ type View = { scale: number; x: number; y: number };
 type Pt = { x: number; y: number };
 type Drag =
   | { kind: "pan"; last: Pt }
-  | { kind: "move"; id: string; start: Pt; origin: Pt; gesture: number }
+  | { kind: "move"; start: Pt; layers: Layer[]; others: Box[]; gesture: number }
+  | { kind: "resize"; layer: Layer; corner: 0 | 1 | 2 | 3; gesture: number }
+  | { kind: "rotate"; layer: Layer; gesture: number }
+  | { kind: "marquee"; start: Pt; end: Pt }
   | { kind: "paint"; layer: ImageLayer; canvas: HTMLCanvasElement; last: Pt };
+
+/** Handle sizes in screen pixels. */
+const HANDLE = 9;
+const ROTATE_OFFSET = 28;
+const SNAP_PX = 6;
+const CORNER_CURSORS = ["nwse-resize", "nesw-resize", "nwse-resize", "nesw-resize"];
 
 let gestures = 0;
 
-export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPainted, onEditText, onFiles, onPick }: Props) {
+export function Workspace({ doc, tool, brush, onSelect, onTransform, onMaskPainted, onEditText, onFiles, onPick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scratch = useRef(newCanvas(1, 1));
   const view = useRef<View>({ scale: 1, x: 0, y: 0 });
   const pointer = useRef<Pt | null>(null);
   const drag = useRef<Drag | null>(null);
+  const guides = useRef<Guide[]>([]);
   const space = useRef(false);
   const frame = useRef(0);
   const [zoom, setZoom] = useState(1);
   const [comparing, setComparing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const checker = useRef<{ key: string; pattern: HTMLCanvasElement } | null>(null);
+
+  /** Canvas (document) → screen (CSS px relative to the element). */
+  const toScreen = (p: Pt): Pt => ({ x: view.current.x + p.x * view.current.scale, y: view.current.y + p.y * view.current.scale });
+  /** Screen → document canvas pixels. */
+  const toDoc = (p: Pt): Pt => ({ x: (p.x - view.current.x) / view.current.scale, y: (p.y - view.current.y) / view.current.scale });
+
+  /** Screen positions of the transform handles of a single selected layer. */
+  const handlesOf = (layer: Layer) => {
+    const corners = layerCorners(layer, sizeOf(layer)).map(toScreen);
+    const top = { x: (corners[0].x + corners[1].x) / 2, y: (corners[0].y + corners[1].y) / 2 };
+    const r = (layer.rotation * Math.PI) / 180;
+    const knob = { x: top.x + Math.sin(r) * ROTATE_OFFSET, y: top.y - Math.cos(r) * ROTATE_OFFSET };
+    return { corners, top, knob };
+  };
+
+  const handleAt = (p: Pt): { kind: "corner"; corner: 0 | 1 | 2 | 3 } | { kind: "rotate" } | null => {
+    if (!doc || tool !== "move" || doc.selectedIds.length !== 1) return null;
+    const layer = selectedLayer(doc);
+    if (!layer || !layer.visible) return null;
+    const h = handlesOf(layer);
+    const near = (q: Pt) => Math.hypot(q.x - p.x, q.y - p.y) <= HANDLE;
+    if (near(h.knob)) return { kind: "rotate" };
+    const i = h.corners.findIndex(near);
+    return i >= 0 ? { kind: "corner", corner: i as 0 | 1 | 2 | 3 } : null;
+  };
 
   const render = useCallback(() => {
     cancelAnimationFrame(frame.current);
@@ -63,10 +115,10 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
       ctx.clearRect(0, 0, w, h);
       const { scale, x, y } = view.current;
       const v = { scale: scale * dpr, dx: x * dpr, dy: y * dpr };
-      const [cw, ch] = [doc.width * v.scale, doc.height * v.scale];
+      const css = getComputedStyle(c);
+      const accent = css.getPropertyValue("--accent");
 
       // Checkerboard = transparent area of the canvas.
-      const css = getComputedStyle(c);
       const checkerColor = css.getPropertyValue("--checker");
       if (checker.current?.key !== `${checkerColor}@${dpr}`) {
         const sq = 10 * dpr;
@@ -82,7 +134,7 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
       ctx.save();
       ctx.translate(v.dx, v.dy);
       ctx.fillStyle = ctx.createPattern(checker.current.pattern, "repeat")!;
-      ctx.fillRect(0, 0, cw, ch);
+      ctx.fillRect(0, 0, doc.width * v.scale, doc.height * v.scale);
       ctx.restore();
 
       ctx.imageSmoothingQuality = "high";
@@ -92,35 +144,69 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
         liveMask: d?.kind === "paint" ? { layerId: d.layer.id, canvas: d.canvas } : undefined,
       });
 
-      // Selection outline (move tool).
-      const sel = selectedLayer(doc);
-      if (sel && tool === "move" && !comparing) {
-        const size = sizeOf(sel);
-        ctx.setTransform(v.scale, 0, 0, v.scale, v.dx, v.dy);
-        ctx.translate(sel.x, sel.y);
-        ctx.rotate((sel.rotation * Math.PI) / 180);
-        ctx.scale(sel.scale, sel.scale);
-        ctx.lineWidth = (1.5 * dpr) / (v.scale * sel.scale);
-        ctx.setLineDash([(5 * dpr) / (v.scale * sel.scale), (4 * dpr) / (v.scale * sel.scale)]);
-        ctx.strokeStyle = css.getPropertyValue("--accent");
-        ctx.strokeRect(-size.width / 2, -size.height / 2, size.width, size.height);
+      // Overlays in screen pixels.
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineWidth = 1.5;
+      if (tool === "move" && !comparing) {
+        const selection = selectedLayers(doc);
+        ctx.strokeStyle = accent;
+        ctx.setLineDash([5, 4]);
+        for (const l of selection) {
+          const pts = layerCorners(l, sizeOf(l)).map(toScreen);
+          ctx.beginPath();
+          pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+          ctx.closePath();
+          ctx.stroke();
+        }
         ctx.setLineDash([]);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        if (selection.length === 1 && selection[0].visible) {
+          const hs = handlesOf(selection[0]);
+          ctx.beginPath();
+          ctx.moveTo(hs.top.x, hs.top.y);
+          ctx.lineTo(hs.knob.x, hs.knob.y);
+          ctx.stroke();
+          ctx.fillStyle = "#ffffff";
+          for (const p of hs.corners) {
+            ctx.fillRect(p.x - HANDLE / 2, p.y - HANDLE / 2, HANDLE, HANDLE);
+            ctx.strokeRect(p.x - HANDLE / 2, p.y - HANDLE / 2, HANDLE, HANDLE);
+          }
+          ctx.beginPath();
+          ctx.arc(hs.knob.x, hs.knob.y, HANDLE / 2 + 1, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        // Smart guides while moving.
+        ctx.strokeStyle = css.getPropertyValue("--danger");
+        ctx.lineWidth = 1;
+        for (const g of guides.current) {
+          const a = toScreen(g.axis === "x" ? { x: g.at, y: 0 } : { x: 0, y: g.at });
+          const b = toScreen(g.axis === "x" ? { x: g.at, y: doc.height } : { x: doc.width, y: g.at });
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+        if (d?.kind === "marquee") {
+          ctx.strokeStyle = accent;
+          ctx.fillStyle = "rgba(60, 197, 169, 0.12)";
+          const [x0, y0, x1, y1] = [d.start.x, d.start.y, d.end.x, d.end.y];
+          ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+          ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+        }
       }
 
       if (tool === "brush" && pointer.current) {
         ctx.beginPath();
-        ctx.arc(pointer.current.x * dpr, pointer.current.y * dpr, (brush.size / 2) * dpr, 0, Math.PI * 2);
-        ctx.lineWidth = 1.5 * dpr;
+        ctx.arc(pointer.current.x, pointer.current.y, brush.size / 2, 0, Math.PI * 2);
         ctx.strokeStyle = "#ffffff";
         ctx.stroke();
-        ctx.setLineDash([4 * dpr, 4 * dpr]);
+        ctx.setLineDash([4, 4]);
         ctx.strokeStyle = "#000000";
         ctx.stroke();
         ctx.setLineDash([]);
       }
     });
-  }, [doc, tool, brush.size, comparing]);
+  }, [doc, tool, brush.size, comparing]); // eslint-disable-line react-hooks/exhaustive-deps -- helpers read refs
 
   const fit = useCallback(() => {
     const c = canvasRef.current;
@@ -172,7 +258,7 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
   useEffect(() => {
     const typing = (e: KeyboardEvent) => (e.target as HTMLElement).closest("input, textarea, select");
     const down = (e: KeyboardEvent) => {
-      if (typing(e)) return;
+      if (typing(e) || e.ctrlKey || e.metaKey) return;
       if (e.code === "Space") space.current = true;
       if (e.key === "0") fit();
       if (e.key === "+" || e.key === "=") zoomAt(1.25);
@@ -186,9 +272,6 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
       removeEventListener("keyup", up);
     };
   }, [fit, zoomAt]);
-
-  /** Screen (CSS px relative to the canvas element) → document canvas pixels. */
-  const toDoc = (p: Pt): Pt => ({ x: (p.x - view.current.x) / view.current.scale, y: (p.y - view.current.y) / view.current.scale });
 
   const paint = (d: Extract<Drag, { kind: "paint" }>, to: Pt) => {
     const size = { width: d.layer.image.width, height: d.layer.image.height };
@@ -205,7 +288,7 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
     ctx.globalCompositeOperation = "source-over";
   };
 
-  const local = (e: React.PointerEvent): Pt => ({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
+  const local = (e: React.PointerEvent | React.MouseEvent): Pt => ({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (!doc) return;
@@ -231,30 +314,66 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
       render();
       return;
     }
-    const q = toDoc(p);
-    const hit = hitTest(doc, q.x, q.y, measureText);
-    if (!hit) {
-      onSelect(null);
-      drag.current = { kind: "pan", last: p };
+    const handle = handleAt(p);
+    const sel = selectedLayer(doc);
+    if (handle && sel) {
+      drag.current = handle.kind === "rotate" ? { kind: "rotate", layer: sel, gesture: ++gestures } : { kind: "resize", layer: sel, corner: handle.corner, gesture: ++gestures };
       return;
     }
-    onSelect(hit.id);
-    drag.current = { kind: "move", id: hit.id, start: q, origin: { x: hit.x, y: hit.y }, gesture: ++gestures };
+    const q = toDoc(p);
+    const hit = hitTest(doc, q.x, q.y, measureText);
+    if (hit && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+      onSelect(toggleSelected(doc, hit.id).selectedIds);
+      return;
+    }
+    if (!hit) {
+      drag.current = { kind: "marquee", start: p, end: p };
+      return;
+    }
+    const ids = doc.selectedIds.includes(hit.id) ? doc.selectedIds : [hit.id];
+    if (ids !== doc.selectedIds) onSelect(ids);
+    const moving = doc.layers.filter((l) => ids.includes(l.id));
+    const others = doc.layers.filter((l) => l.visible && !ids.includes(l.id)).map((l) => boundsOf([l], measureText)!);
+    drag.current = { kind: "move", start: q, layers: moving, others, gesture: ++gestures };
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const p = local(e);
     pointer.current = p;
     const d = drag.current;
-    if (d?.kind === "pan") {
+    const q = toDoc(p);
+    if (!d) {
+      if (tool === "move") {
+        const h = handleAt(p);
+        (e.currentTarget as HTMLElement).style.cursor = !h ? "default" : h.kind === "rotate" ? "grab" : CORNER_CURSORS[h.corner];
+      }
+      if (tool === "brush") render();
+      return;
+    }
+    if (d.kind === "pan") {
       view.current = { ...view.current, x: view.current.x + p.x - d.last.x, y: view.current.y + p.y - d.last.y };
       d.last = p;
-    } else if (d?.kind === "paint") {
+    } else if (d.kind === "paint") {
       paint(d, p);
       d.last = p;
-    } else if (d?.kind === "move") {
-      const q = toDoc(p);
-      onMoveLayer(d.id, Math.round(d.origin.x + q.x - d.start.x), Math.round(d.origin.y + q.y - d.start.y), d.gesture);
+    } else if (d.kind === "marquee") {
+      d.end = p;
+    } else if (d.kind === "move") {
+      let [dx, dy] = [q.x - d.start.x, q.y - d.start.y];
+      guides.current = [];
+      if (!e.altKey && doc) {
+        const b = boundsOf(d.layers, measureText)!;
+        const s = snap({ left: b.left + dx, top: b.top + dy, right: b.right + dx, bottom: b.bottom + dy }, d.others, doc, SNAP_PX / view.current.scale);
+        dx += s.dx;
+        dy += s.dy;
+        guides.current = s.guides;
+      }
+      onTransform(new Map(d.layers.map((l) => [l.id, { x: Math.round(l.x + dx), y: Math.round(l.y + dy) }])), d.gesture);
+    } else if (d.kind === "resize") {
+      const r = resizeFromCorner(d.layer, sizeOf(d.layer), d.corner, q.x, q.y);
+      onTransform(new Map([[d.layer.id, r]]), d.gesture);
+    } else if (d.kind === "rotate") {
+      onTransform(new Map([[d.layer.id, { rotation: rotationFromPointer(d.layer, q.x, q.y, e.shiftKey) }]]), d.gesture);
     }
     render();
   };
@@ -262,16 +381,23 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
   const onPointerUp = () => {
     const d = drag.current;
     drag.current = null;
+    guides.current = [];
     if (d?.kind === "paint") {
       onMaskPainted(d.layer.id, maskAlpha(d.canvas));
       d.canvas.width = d.canvas.height = 0;
+    } else if (d?.kind === "marquee" && doc) {
+      const [a, b] = [toDoc(d.start), toDoc(d.end)];
+      const tiny = Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y) < 3;
+      const box = { left: Math.min(a.x, b.x), top: Math.min(a.y, b.y), right: Math.max(a.x, b.x), bottom: Math.max(a.y, b.y) };
+      onSelect(tiny ? [] : layersInRect(doc, box, measureText).map((l) => l.id));
     }
+    render();
   };
 
   const onDoubleClick = (e: React.MouseEvent) => {
     if (!doc) return;
-    const q = toDoc({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
-    const hit: Layer | null = hitTest(doc, q.x, q.y, measureText);
+    const q = toDoc(local(e));
+    const hit = hitTest(doc, q.x, q.y, measureText);
     if (hit?.kind === "text") onEditText(hit.id);
   };
 
@@ -318,16 +444,21 @@ export function Workspace({ doc, tool, brush, onSelect, onMoveLayer, onMaskPaint
   const hasMask = doc.layers.some((l) => l.kind === "image" && l.mask);
   return (
     <div
-      className="relative flex-1 overflow-hidden"
-      onDragOver={(e) => e.preventDefault()}
+      className={`relative flex-1 overflow-hidden ${dragOver ? "outline-2 -outline-offset-4 outline-accent" : ""}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
       onDrop={(e) => {
         e.preventDefault();
+        setDragOver(false);
         onFiles(e.dataTransfer.files);
       }}
     >
       <canvas
         ref={canvasRef}
-        className={`size-full touch-none ${tool === "brush" ? "cursor-none" : "cursor-default"}`}
+        className={`size-full touch-none ${tool === "brush" ? "cursor-none" : ""}`}
         aria-label={t("workspace.label", { name: doc.name })}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
